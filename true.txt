@@ -1,0 +1,161 @@
+cpp" type="code"
+#include <iostream>
+#include <vector>
+#include <string>
+#include <thread>
+#include <atomic>
+#include <cuda_runtime.h>
+
+struct SearchOptions {
+    bool uncompressed;
+    bool bothFormats;
+    bool caseInsensitive;
+    bool useGPU;
+    std::string inputFile;
+    std::string outputFile;
+    std::vector<int> gpuIds;
+    std::vector<int> gpuGrid;
+    int maxFound;
+    int threadNumber;
+    bool noSSE;
+    int rekeyInterval;
+    std::string startPubKey;
+};
+
+// تعريف دالة CUDA للبحث على GPU
+__global__ void searchGPU(const char* prefix, int prefixLength, char* result, int* found) {
+    // تنفيذ البحث على GPU (سيتم تنفيذه لاحقًا)
+}
+
+class VanitySearch {
+private:
+    std::string start;
+    std::string end;
+    std::string prefix;
+    SearchOptions options;
+    int maxConsecutiveRepeats;
+    std::atomic<bool> found;
+
+    bool isValidRange(const std::string& key) {
+        char last = key[0];
+        int count = 1;
+        for (size_t i = 1; i < key.length(); i++) {
+            if (key[i] == last) {
+                count++;
+                if (count > maxConsecutiveRepeats) {
+                    return false;
+                }
+            } else {
+                count = 1;
+                last = key[i];
+            }
+        }
+        return true;
+    }
+
+    void searchCPU(const std::string& prefix) {
+        // تنفيذ البحث على CPU (سيتم تنفيذه لاحقًا)
+    }
+
+public:
+    VanitySearch(const std::string& start, const std::string& end, const std::string& prefix,
+                 const SearchOptions& options, int maxRepeats)
+        : start(start), end(end), prefix(prefix), options(options),
+          maxConsecutiveRepeats(maxRepeats), found(false) {}
+
+    std::vector<std::string> search() {
+        std::vector<std::string> results;
+        std::vector<std::thread> threads;
+
+        if (!options.useGPU || options.threadNumber > 0) {
+            // بدء البحث على CPU
+            for (int i = 0; i < options.threadNumber; i++) {
+                threads.emplace_back(&VanitySearch::searchCPU, this, prefix);
+            }
+        }
+
+        if (options.useGPU) {
+            // بدء البحث على GPU
+            char* d_result;
+            int* d_found;
+            cudaMalloc(&d_result, 34 * sizeof(char));
+            cudaMalloc(&d_found, sizeof(int));
+            
+            for (int gpuId : options.gpuIds) {
+                cudaSetDevice(gpuId);
+                dim3 grid(options.gpuGrid[0], options.gpuGrid[1]);
+                dim3 block(256);
+                searchGPU<<<grid, block>>>(prefix.c_str(), prefix.length(), d_result, d_found);
+            }
+        }
+
+        // انتظار انتهاء جميع العمليات
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        
+        if (options.useGPU) {
+            cudaDeviceSynchronize();
+
+            // جمع النتائج من GPU
+            char h_result[34];
+            int h_found;
+            cudaMemcpy(h_result, d_result, 34 * sizeof(char), cudaMemcpyDeviceToHost);
+            cudaMemcpy(&h_found, d_found, sizeof(int), cudaMemcpyDeviceToHost);
+
+            if (h_found) {
+                results.push_back(std::string(h_result));
+            }
+
+            cudaFree(d_result);
+            cudaFree(d_found);
+        }
+
+        return results;
+    }
+};
+
+extern "C" {
+    VanitySearch* createVanitySearch(const char* start, const char* end, const char* prefix,
+                                     const SearchOptions* options, int maxRepeats) {
+        return new VanitySearch(start, end, prefix, *options, maxRepeats);
+    }
+
+    char** search(VanitySearch* vs, int* resultCount) {
+        auto results = vs->search();
+        *resultCount = results.size();
+        char** cResults = new char*[results.size()];
+        for (size_t i = 0; i < results.size(); i++) {
+            cResults[i] = new char[results[i].length() + 1];
+            strcpy(cResults[i], results[i].c_str());
+        }
+        return cResults;
+    }
+
+    void setSearchOptions(VanitySearch* vs, int uncompressed, int bothFormats, int caseInsensitive,
+                          int useGPU, const char* inputFile, const char* outputFile,
+                          int* gpuIds, int gpuIdCount, int* gpuGrid, int gpuGridCount,
+                          int maxFound, int threadNumber, int noSSE, const char* startPubKey) {
+        SearchOptions options;
+        options.uncompressed = uncompressed != 0;
+        options.bothFormats = bothFormats != 0;
+        options.caseInsensitive = caseInsensitive != 0;
+        options.useGPU = useGPU != 0;
+        options.inputFile = inputFile;
+        options.outputFile = outputFile;
+        options.gpuIds = std::vector<int>(gpuIds, gpuIds + gpuIdCount);
+        options.gpuGrid = std::vector<int>(gpuGrid, gpuGrid + gpuGridCount);
+        options.maxFound = maxFound;
+        options.threadNumber = threadNumber;
+        options.noSSE = noSSE != 0;
+        options.startPubKey = startPubKey;
+
+        // تحديث الخيارات في كائن VanitySearch
+        // (يجب إضافة طريقة لتحديث الخيارات في فئة VanitySearch)
+    }
+
+    void deleteVanitySearch(VanitySearch* vs) {
+        delete vs;
+    }
+}
+
